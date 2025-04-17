@@ -51,30 +51,33 @@ async fn read_record_by_uuid(db: web::Data<DbEnv>, path: web::Path<String>) -> i
     let key = path.into_inner();
     let rtxn = db.env.read_txn().unwrap();
 
-    let main_db: Database<Str, SerdeBincode<DBSchema>> = db
+    let main_db: Option<Database<Str, SerdeBincode<DBSchema>>> = db
         .env
         .open_database(&rtxn, Some("main_db"))
-        .unwrap()
         .unwrap();
 
-    let record = {
-        match main_db.get(&rtxn, &key)  {
-            Ok(Some(record)) => Some(record),
-            Ok(_) => {
-                return HttpResponse::NotFound().body(format!("No Record found with the uuid: {}", key))
+    if let Some(main_db) = main_db {
+        let record = {
+            match main_db.get(&rtxn, &key)  {
+                Ok(Some(record)) => Some(record),
+                Ok(_) => {
+                    return HttpResponse::NotFound().body(format!("No Record found with the uuid: {}", key))
+                }
+                Err(e) => {
+                    eprintln!("Database error: {}", e);
+                    return HttpResponse::InternalServerError().body("Database Error")
+                }
             }
-            Err(e) => {
-                eprintln!("Database error: {}", e);
-                return HttpResponse::InternalServerError().body("Database Error")
-            }
+        };
+    
+        if let Some(record) = record {
+            return HttpResponse::Ok().body(format!(
+                "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}",
+                record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address
+            ))
         }
-    };
-
-    if let Some(record) = record {
-        return HttpResponse::Ok().body(format!(
-            "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}",
-            record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address
-        ))
+    } else {
+        return HttpResponse::Ok().body("The DataBase Is Empty")
     }
 
     HttpResponse::Ok().body("No record Found")
@@ -205,7 +208,7 @@ async fn main() -> std::io::Result<()> {
             .service(delete_record)
         
     })
-    .bind("0.0.0.0:8080")?
+    .bind("127.0.0.1:8080")?
     .run()
     .await
 }
