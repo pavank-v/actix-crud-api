@@ -2,7 +2,6 @@ use std::{str::FromStr, sync::Arc};
 use actix_crud_api::{setup_db, DBSchema, Status};
 use actix_web::{delete, get, post, put, web, App, HttpResponse, HttpServer, Responder, Result};
 use heed::{types::*, Database, Env, EnvOpenOptions};
-use std::env;
 
 struct DbEnv {
     env: Arc<Env>
@@ -196,9 +195,6 @@ async fn main() -> std::io::Result<()> {
     let db_state = web::Data::new(DbEnv {
         env
     });
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let addr = format!("0.0.0.0:{}", port);
-
 
     HttpServer::new(move || {
         App::new()
@@ -209,7 +205,7 @@ async fn main() -> std::io::Result<()> {
             .service(delete_record)
         
     })
-    .bind(addr)?
+    .bind("0.0.0.0:8080")?
     .run()
     .await
 }
