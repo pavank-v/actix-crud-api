@@ -13,6 +13,8 @@ struct DBdata {
 
 #[post("/create-record")]
 async fn create_record(db_env: web::Data<DbEnv>,db_handles: web::Data<DBdata>, data: web::Json<DBSchema>) -> Result<String> {
+    let start = std::time::Instant::now();
+
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
         actix_web::error::ErrorInternalServerError(format!("Error in creating write transaction: {e}"))
     })?;
@@ -44,11 +46,14 @@ async fn create_record(db_env: web::Data<DbEnv>,db_handles: web::Data<DBdata>, d
         actix_web::error::ErrorInternalServerError(e)
     })?;
 
-    Ok(format!("Successfully Loaded into DataBase {}", uuid))
+    let duration = start.elapsed(); 
+    Ok(format!("Successfully Loaded into DataBase, uuid is: {}\nResponse Time: {}", uuid, duration.as_micros()))
 }
 
 #[get("/read-record-by-uuid/{key}")]
 async fn read_record_by_uuid(db: web::Data<DbEnv>, db_handles: web::Data<DBdata>, path: web::Path<String>) -> impl Responder {
+    let start = std::time::Instant::now();
+
     let key = path.into_inner();
     let rtxn = db.env.read_txn().unwrap();
 
@@ -68,9 +73,11 @@ async fn read_record_by_uuid(db: web::Data<DbEnv>, db_handles: web::Data<DBdata>
     };
 
     if let Some(record) = record {
+        let duration = start.elapsed();
         return HttpResponse::Ok().body(format!(
-            "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}",
-            record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address
+            "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}\nResponse Time: {}",
+            record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address,
+            duration.as_micros()
         ))
     }
 
@@ -79,6 +86,8 @@ async fn read_record_by_uuid(db: web::Data<DbEnv>, db_handles: web::Data<DBdata>
 
 #[put("/update-county-status/{uuid}/{new_status}")]
 async fn update_county_status(db_env: web::Data<DbEnv>, db_handles: web::Data<DBdata>, path: web::Path<(String, String)>) -> Result<String> {
+    let start = std::time::Instant::now();
+        
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
@@ -116,8 +125,9 @@ async fn update_county_status(db_env: web::Data<DbEnv>, db_handles: web::Data<DB
         wtxn.commit().map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
+        let duration = start.elapsed();
 
-        return Ok("Successfully Updated the Record".to_string())
+        return Ok(format!("Successfully Updated the Record\nResponse Time: {}", duration.as_micros()))
     }
 
    Ok("Failed to insert the Record".to_string())
@@ -125,6 +135,8 @@ async fn update_county_status(db_env: web::Data<DbEnv>, db_handles: web::Data<DB
 
 #[delete("/delete-record/{uuid}")]
 async fn delete_record(db_env: web::Data<DbEnv>, db_handles:web::Data<DBdata>, path: web::Path<String>) -> Result<String> {
+    let start = std::time::Instant::now();
+
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
@@ -159,7 +171,9 @@ async fn delete_record(db_env: web::Data<DbEnv>, db_handles:web::Data<DBdata>, p
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
-        return Ok("Successfull deleted the record".to_string());
+        let duration = start.elapsed();
+
+        return Ok(format!("Successfully Deleted the record\nResponse Time: {}", duration.as_micros()))
     } else {
         return Ok("Couldn't Delete the record".to_string())
     }
