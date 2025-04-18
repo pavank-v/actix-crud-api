@@ -1,42 +1,43 @@
 use std::{str::FromStr, sync::Arc};
-use actix_crud_api::{setup_db, DBSchema, Status};
+use actix_crud_api::{setup_db, DBSchema, Status, DBHandles};
 use actix_web::{delete, get, post, put, web, App, HttpResponse, HttpServer, Responder, Result};
-use heed::{types::*, Database, Env, EnvOpenOptions};
+use heed::{Env, EnvOpenOptions};
 
 struct DbEnv {
     env: Arc<Env>
 }
 
+struct DBdata {
+   db_data: Arc<DBHandles> 
+}
+
 #[post("/create-record")]
-async fn create_record(db_env: web::Data<DbEnv> ,data: web::Json<DBSchema>) -> Result<String> {
-    let db_handles = setup_db(db_env.env.clone()).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
+async fn create_record(db_env: web::Data<DbEnv>,db_handles: web::Data<DBdata>, data: web::Json<DBSchema>) -> Result<String> {
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+        actix_web::error::ErrorInternalServerError(format!("Error in creating write transaction: {e}"))
     })?;
 
     let uuid = uuid::Uuid::new_v4().to_string();
-    db_handles.main_db.put(&mut wtxn, &uuid, &data).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+    db_handles.db_data.main_db.put(&mut wtxn, &uuid, &data).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error in inserting Data into Main DataBase {e}"))
     })?;
     
     let county_uuid = format!("{}-{}", data.county, uuid);
-    db_handles.county_index.put(&mut wtxn, &county_uuid, &uuid).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+    db_handles.db_data.county_index.put(&mut wtxn, &county_uuid, &uuid).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error in inserting Data into County index {e}"))
     })?;
     
-    db_handles.opened_index.put(&mut wtxn, &data.opened, &uuid).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+    db_handles.db_data.opened_index.put(&mut wtxn, &data.opened, &uuid).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error in inserting Data into Opened Index {e}"))
     })?;
 
-    db_handles.last_updated.put(&mut wtxn, &data.last_updated, &uuid).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+    db_handles.db_data.last_updated.put(&mut wtxn, &data.last_updated, &uuid).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error in inserting data into Last Updated {e}"))
     })?;
 
     let county_status_uuid = format!("{}-{}", data.county_status, uuid);
-    db_handles.county_status.put(&mut wtxn, &county_status_uuid, &uuid).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
+    db_handles.db_data.county_status.put(&mut wtxn, &county_status_uuid, &uuid).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error in inserting data into county status {e}"))
     })?;
 
     wtxn.commit().map_err(|e| {
@@ -47,53 +48,43 @@ async fn create_record(db_env: web::Data<DbEnv> ,data: web::Json<DBSchema>) -> R
 }
 
 #[get("/read-record-by-uuid/{key}")]
-async fn read_record_by_uuid(db: web::Data<DbEnv>, path: web::Path<String>) -> impl Responder {
+async fn read_record_by_uuid(db: web::Data<DbEnv>, db_handles: web::Data<DBdata>, path: web::Path<String>) -> impl Responder {
     let key = path.into_inner();
     let rtxn = db.env.read_txn().unwrap();
 
-    let main_db: Option<Database<Str, SerdeBincode<DBSchema>>> = db
-        .env
-        .open_database(&rtxn, Some("main_db"))
-        .unwrap();
+    let main_db = db_handles.db_data.main_db;
 
-    if let Some(main_db) = main_db {
-        let record = {
-            match main_db.get(&rtxn, &key)  {
-                Ok(Some(record)) => Some(record),
-                Ok(_) => {
-                    return HttpResponse::NotFound().body(format!("No Record found with the uuid: {}", key))
-                }
-                Err(e) => {
-                    eprintln!("Database error: {}", e);
-                    return HttpResponse::InternalServerError().body("Database Error")
-                }
+    let record = {
+        match main_db.get(&rtxn, &key)  {
+            Ok(Some(record)) => Some(record),
+            Ok(_) => {
+                return HttpResponse::NotFound().body(format!("No Record found with the uuid: {}", key))
             }
-        };
-    
-        if let Some(record) = record {
-            return HttpResponse::Ok().body(format!(
-                "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}",
-                record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address
-            ))
+            Err(e) => {
+                eprintln!("Database error: {}", e);
+                return HttpResponse::InternalServerError().body("Database Error")
+            }
         }
-    } else {
-        return HttpResponse::Ok().body("The DataBase Is Empty")
+    };
+
+    if let Some(record) = record {
+        return HttpResponse::Ok().body(format!(
+            "permit_link: {}\npermit_number: {}\nclient: {}\nopened_date: {}\nlast_updated: {}\n status_updated: {}\n county: {}\n county_status: {}\n manual_status: {}\naddress: {}",
+            record.permit_link, record.permit_number, record.client, record.opened, record.last_updated, record.status_updated, record.county, record.county_status, record.manual_status, record.address
+        ))
     }
 
     HttpResponse::Ok().body("No record Found")
 }
 
 #[put("/update-county-status/{uuid}/{new_status}")]
-async fn update_county_status(db_env: web::Data<DbEnv>, path: web::Path<(String, String)>) -> Result<String> {
-    let db_handles = setup_db(db_env.env.clone()).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
+async fn update_county_status(db_env: web::Data<DbEnv>, db_handles: web::Data<DBdata>, path: web::Path<(String, String)>) -> Result<String> {
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
     let (uuid, c_status) = path.into_inner();
 
-    let main_record= db_handles.main_db.get(&wtxn, &uuid).map_err(|e| {
+    let main_record= db_handles.db_data.main_db.get(&wtxn, &uuid).map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
 
@@ -102,7 +93,7 @@ async fn update_county_status(db_env: web::Data<DbEnv>, path: web::Path<(String,
         let last_county_status = data.county_status.to_string();
         data.county_status = Status::from_str(&c_status).unwrap();
 
-        db_handles.main_db.put(&mut wtxn, &uuid, &data).map_err(|e| {
+        db_handles.db_data.main_db.put(&mut wtxn, &uuid, &data).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
@@ -110,7 +101,7 @@ async fn update_county_status(db_env: web::Data<DbEnv>, path: web::Path<(String,
 
         let county_status_uuid = format!("{}-{}", last_county_status, uuid);
         
-        db_handles.county_status.delete(&mut wtxn, &county_status_uuid).map_err(|e| {
+        db_handles.db_data.county_status.delete(&mut wtxn, &county_status_uuid).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
@@ -118,7 +109,7 @@ async fn update_county_status(db_env: web::Data<DbEnv>, path: web::Path<(String,
         println!("Inserting the new record in the country index");
 
         let new_county_status_uuid = format!("{}-{}", c_status, uuid);
-        db_handles.county_status.put(&mut wtxn, &new_county_status_uuid, &uuid).map_err(|e| {
+        db_handles.db_data.county_status.put(&mut wtxn, &new_county_status_uuid, &uuid).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
@@ -133,16 +124,13 @@ async fn update_county_status(db_env: web::Data<DbEnv>, path: web::Path<(String,
 }
 
 #[delete("/delete-record/{uuid}")]
-async fn delete_record(db_env: web::Data<DbEnv>, path: web::Path<String>) -> Result<String> {
-    let db_handles = setup_db(db_env.env.clone()).map_err(|e| {
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
+async fn delete_record(db_env: web::Data<DbEnv>, db_handles:web::Data<DBdata>, path: web::Path<String>) -> Result<String> {
     let mut wtxn = db_env.env.write_txn().map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
     let uuid = path.into_inner();
 
-    let main_data = db_handles.main_db.get(&wtxn, &uuid).map_err(|e| {
+    let main_data = db_handles.db_data.main_db.get(&wtxn, &uuid).map_err(|e| {
         actix_web::error::ErrorInternalServerError(e)
     })?;
 
@@ -150,20 +138,20 @@ async fn delete_record(db_env: web::Data<DbEnv>, path: web::Path<String>) -> Res
         let county_uuid = format!("{}-{}", record.county, uuid);
         let update_county_status_uuid = format!("{}-{}", record.county_status, uuid);
 
-        db_handles.county_index.delete(&mut wtxn, &county_uuid).map_err(|e| {
+        db_handles.db_data.county_index.delete(&mut wtxn, &county_uuid).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
-        db_handles.county_status.delete(&mut wtxn, &update_county_status_uuid).map_err(|e| {
+        db_handles.db_data.county_status.delete(&mut wtxn, &update_county_status_uuid).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
-        db_handles.opened_index.delete(&mut wtxn, &record.opened).map_err(|e| {
+        db_handles.db_data.opened_index.delete(&mut wtxn, &record.opened).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
-        db_handles.last_updated.delete(&mut wtxn, &record.last_updated).map_err(|e| {
+        db_handles.db_data.last_updated.delete(&mut wtxn, &record.last_updated).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
-        db_handles.main_db.delete(&mut wtxn, &uuid).map_err(|e| {
+        db_handles.db_data.main_db.delete(&mut wtxn, &uuid).map_err(|e| {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
@@ -195,6 +183,13 @@ async fn main() -> std::io::Result<()> {
 
     println!("Environment Opened Successfully");
 
+    let db_handles = setup_db(env.clone()).map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!("Error In Setting Up DataBase: {e}"))
+    }).unwrap();
+
+    let db_handles = web::Data::new(DBdata {
+        db_data:Arc::new(db_handles)
+    });
     let db_state = web::Data::new(DbEnv {
         env
     });
@@ -202,6 +197,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(db_state.clone())
+            .app_data(db_handles.clone())
             .service(create_record)
             .service(read_record_by_uuid)
             .service(update_county_status)

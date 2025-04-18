@@ -70,6 +70,7 @@ pub fn setup_db(env: Arc<Env>) -> Result<DBHandles, Box<dyn std::error::Error>> 
     if !db_path.exists() {
         std::fs::create_dir_all(db_path)?;
     }
+
     {
         let mut wtxn = env.write_txn()?;
         
