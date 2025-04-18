@@ -170,7 +170,7 @@ async fn delete_record(db_env: web::Data<DbEnv>, db_handles:web::Data<DBdata>, p
 async fn main() -> std::io::Result<()> {
     let db_path = std::path::Path::new("database");
     std::fs::create_dir_all(db_path)?;
-    
+
     let env = match unsafe {
         EnvOpenOptions::new()
             .map_size(1024 * 1024 * 1024)
@@ -207,7 +207,7 @@ async fn main() -> std::io::Result<()> {
             .service(delete_record)
         
     })
-    .bind("127.0.0.1:8080")?
+    .bind("0.0.0.0:8080")?
     .run()
     .await
 }
